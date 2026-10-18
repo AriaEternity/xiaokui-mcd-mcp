@@ -10,7 +10,10 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test test/*.test.mjs",
-    "start": "node examples/host.mjs"
+    "start": "node dist/main.js",
+    "start:host": "node examples/host.mjs",
+    "owner:init": "node scripts/owner-init.mjs",
+    "token:init": "node scripts/token-init.mjs"
   },
   "dependencies": {
     "@fastify/rate-limit": "10.3.0",

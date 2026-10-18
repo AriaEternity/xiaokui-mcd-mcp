@@ -1,3 +1,4 @@
+import './network-guard.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync,readFileSync,writeFileSync,readdirSync} from 'node:fs';
@@ -10,10 +11,13 @@ import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import Fastify from 'fastify';
 import {registerMcdGateway} from '../dist/index.js';
+import {createStandaloneGateway} from '../dist/standalone.js';
+import {initializeOwner} from '../scripts/owner-record.mjs';
 import {readMcdConfiguration} from '../deploy/mcd-credentials.mjs';
 import {McdMcpClient} from '../dist/mcp/mcd-client.js';
 import {mcdPaymentUrl} from '../dist/mcd/orders.js';
 const origin='https://synthetic.example',base='/api/mcd/oauth',callback='https://chatgpt.com/connector_platform_oauth_redirect';
+process.umask(0o077);
 const mcd={path:'/api/mcd/orders/mcp',scope:'mcd:orders:create',client:'xiaokui-chatgpt-mcd'},secret='SYNTHETIC-MCD-CREDENTIAL-NOT-REAL';
 const ownerHeaders={cookie:'synthetic-owner=session',origin,'x-csrf-token':'synthetic-csrf'};
 const context={storeCode:'SYNTHETIC-STORE',orderType:1,beType:1};
@@ -45,26 +49,32 @@ async function harness(t,options={}) {
  };
  const inspectSession=async cookie=>cookie===ownerHeaders.cookie?{ownerId:'synthetic-owner',csrfToken:'synthetic-csrf'}:cookie==='other=session'?{ownerId:'synthetic-other',csrfToken:'synthetic-csrf'}:undefined;
  const socket=createServer();await new Promise(r=>socket.listen(0,'127.0.0.1',r));const port=socket.address().port;await new Promise(r=>socket.close(r));
+ const ownerFile=join(root,'owner.json');
+ if(options.realIdentity)initializeOwner(ownerFile,'owner','SYNTHETIC-OWNER-PASSWORD-ONLY','SYNTHETIC-OWNER-PASSWORD-ONLY');
+ const actualOwner=options.realIdentity?JSON.parse(readFileSync(ownerFile,'utf8')).ownerId:'synthetic-owner';
  const start=async()=>{
+  if(options.realIdentity){const app=createStandaloneGateway({root,publicOrigin:origin,ownerFile,token:secret,transport,createEnabled:false,now:()=>now});await app.listen({port,host:'127.0.0.1'});return app;}
   const app=Fastify({logger:{stream:new Writable({write(c,_e,done){logs+=c;done();}})}});
   if(!options.disabled)registerMcdGateway(app,{dataRoot:root,publicOrigin:origin,ownerId:'synthetic-owner',inspectSession,
    token:options.invalidToken?'\n':secret,transport,createEnabled:options.createEnabled!==false,now:()=>now,...(options.sse?{responseMode:'sse'}:{})});
   await app.listen({port,host:'127.0.0.1'});return app;
  };
  let app=await start();t.after(async()=>{await app.close();rmSync(root,{recursive:true,force:true});});
+ const realHeaders={...ownerHeaders};
+ if(options.realIdentity){const login=await app.inject({method:'POST',url:'/api/v1/auth/login',headers:{origin},payload:{username:'owner',password:'SYNTHETIC-OWNER-PASSWORD-ONLY'}});assert.equal(login.statusCode,200);realHeaders.cookie=login.headers['set-cookie'].split(';')[0];const session=await app.inject({url:'/api/v1/auth/session',headers:{cookie:realHeaders.cookie}});realHeaders['x-csrf-token']=session.json().csrfToken;assert.equal(session.json().ownerId,actualOwner);}
  const inject=opt=>app.inject(opt);
  const grant=async(kind=mcd)=>{
   const verifier='p'.repeat(48),challenge=createHash('sha256').update(verifier).digest('base64url');
   const a=await inject({url:base+'/authorize?'+new URLSearchParams({client_id:kind.client,redirect_uri:callback,response_type:'code',scope:kind.scope,resource:origin+kind.path,state:'synthetic',code_challenge:challenge,code_challenge_method:'S256'})});assert.equal(a.statusCode,303);
   const request=new URL(a.headers.location).searchParams.get('request');const page=await inject({url:new URL(a.headers.location).pathname+new URL(a.headers.location).search});if(kind===mcd)assert(page.body.includes('麦当劳点单'));
-  const c=await inject({method:'POST',url:base+'/consent',headers:ownerHeaders,payload:{request,decision:'allow'}});assert.equal(c.statusCode,200);
+  const c=await inject({method:'POST',url:base+'/consent',headers:options.realIdentity?realHeaders:ownerHeaders,payload:{request,decision:'allow'}});assert.equal(c.statusCode,200);
   const code=new URL(c.json().redirectUrl).searchParams.get('code');const port=app.server.address().port;
   const r=await fetch('http://127.0.0.1:'+port+base+'/token',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded',connection:'close'},body:new URLSearchParams({grant_type:'authorization_code',client_id:kind.client,redirect_uri:callback,resource:origin+kind.path,code,code_verifier:verifier})});assert.equal(r.status,200);return r.json();
  };
  const rpc=(token,name,args,kind=mcd)=>inject({method:'POST',url:kind.path,headers:{authorization:'Bearer '+token,accept:'application/json, text/event-stream','content-type':'application/json','mcp-protocol-version':'2025-06-18'},payload:{jsonrpc:'2.0',id:1,method:name==='tools/list'?'tools/list':'tools/call',...(name==='tools/list'?{}:{params:{name,arguments:args}})}});
  const call=async(token,name,args)=>{const r=await rpc(token,name,args);assert.equal(r.statusCode,200);const body=r.headers['content-type'].startsWith('text/event-stream')?JSON.parse(r.body.split('data: ')[1].split('\n')[0]):r.json();return body.result;};
  const prepare=async token=>{const nearby=await call(token,'query-nearby-stores',{searchType:2,beType:1,city:'合成市',keyword:'合成地点'});assert.equal(nearby.isError,false,JSON.stringify(nearby));const q=await call(token,'calculate-price',draft);assert.equal(q.isError,false,JSON.stringify(q));const p=await call(token,'prepare-order',{quoteId:q.structuredContent.quoteId,takeWayCode:'SYNTHETIC-TAKEOUT'});assert.equal(p.isError,false);return p.structuredContent;};
- const confirm=async(id,headers=ownerHeaders)=>{const d=await inject({url:'/api/mcd/orders/confirm/'+id+'/details',headers});assert.equal(d.statusCode,200);return inject({method:'POST',url:'/api/mcd/orders/confirm/'+id+'/approve',headers,payload:{nonce:d.json().nonce}});};
+ const confirm=async(id,headers=options.realIdentity?realHeaders:ownerHeaders)=>{const d=await inject({url:'/api/mcd/orders/confirm/'+id+'/details',headers});assert.equal(d.statusCode,200);return inject({method:'POST',url:'/api/mcd/orders/confirm/'+id+'/approve',headers,payload:{nonce:d.json().nonce}});};
  return {root,calls,port:()=>app.server.address().port,inject,grant,rpc,call,prepare,confirm,read:id=>JSON.parse(readFileSync(join(root,'mcd-orders',id+'.json'),'utf8')),logs:()=>logs,status:s=>{status=s;},restart:async()=>{await app.close();app=await start();},advance:ms=>{now+=ms;}};
 }
 test('OAuth拒绝错误资源/scope/本人，工具仅8个，撤销后访问失效',async t=>{
@@ -79,6 +89,14 @@ test('OAuth拒绝错误资源/scope/本人，工具仅8个，撤销后访问失�
  assert.equal((await h.inject({method:'POST',url:base+'/consent',headers:{...ownerHeaders,cookie:'other=session'},payload:{request,decision:'allow'}})).statusCode,403);
  assert.equal((await h.inject({method:'POST',url:base+'/revoke-mcd-orders',headers:ownerHeaders,payload:{}})).statusCode,200);
  assert.equal((await h.rpc(token,'tools/list',{})).statusCode,401);assert.equal(h.calls.length,0);
+});
+test('独立版真实密码登录→OAuth→非交易计价→网页批准，重启保留会话/授权；默认关闭真实创建',async t=>{
+ const h=await harness(t,{realIdentity:true}),token=(await h.grant()).access_token,p=await h.prepare(token);
+ const anonymous=await h.inject({url:'/api/mcd/orders/confirm/'+p.intentId+'/details'});assert.equal(anonymous.statusCode,403);
+ assert((await h.call(token,'create-order',{intentId:p.intentId})).isError);
+ await h.restart();assert.equal((await h.confirm(p.intentId)).statusCode,200);
+ assert((await h.call(token,'create-order',{intentId:p.intentId})).content[0].text.includes('MCD_CREATE_DISABLED'));
+ assert.equal(h.calls.filter(c=>c.name==='create-order').length,0);
 });
 for(const sse of [false,true])test('SDK真实传输合成：报价→取餐方式→本人批准→创建一次→官方付款链接→官方原文状态 '+sse,async t=>{
  const h=await harness(t,{sse}),token=(await h.grant()).access_token;const p=await h.prepare(token);assert.equal(p.payable,16);assert(!JSON.stringify(p).includes('nonce'));

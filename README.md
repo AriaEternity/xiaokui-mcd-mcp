@@ -1,12 +1,27 @@
 # 小葵 × 麦当劳中国 MCP
 
+> **零基础用户从这里开始：[完整中文新手教程](docs/beginners-guide.md)**。现在提供独立的单主人运行模式，无需 KuiNest、Fastify 宿主或现成登录系统；仍需本人准备服务器、HTTPS 域名、官方 Token 和 ChatGPT 自定义 MCP 权限。[常见问题](docs/faq.md)
+
+## 复制给 ChatGPT 的部署提示词
+
+```text
+我想部署 https://github.com/AriaEternity/xiaokui-mcd-mcp ，没有后端经验。
+请先实际阅读最新 README、docs/beginners-guide.md、docs/DEPLOYMENT.md、docs/faq.md、SECURITY.md，以及 package.json、src/main.ts 和部署模板。不能读取时请说明，不要猜。
+先问我使用电脑还是手机、ChatGPT是否能添加自定义MCP、有无本人合法麦当劳官方MCP Token资格、有无服务器/域名、系统和架构、费用预算。先确认条件再建议我付费。
+引导使用本仓库的standalone模式，不要求我编写OWNER_AUTH_ADAPTER。使用Ubuntu24.04 x64、Node24.20.0与systemd/nginx，说明better-sqlite3需要在目标Linux安装。一次只教一个步骤，说明在哪里输入、成功结果和失败排查；等我确认后继续，不发明一键部署。
+密码、Token、Cookie、验证码、私钥、主人文件和数据库只由我在自己环境处理，不能要求粘贴给你。本站主人、麦当劳账户、系统账号和ChatGPT账号要分清。与瑞幸同机时检查独立端口和目录，OAuth路径使用本仓库自己的/api/mcd/oauth/*。
+先完成离线测试、HTTPS、owner:init和token:init、OAuth、真实门店/菜单/套餐查询、calculate-price及取餐方式核对。MCD_ORDER_CREATE_ENABLED保持false，不自动批准、创建、取消或支付。网页逐笔批准、持久化和UNKNOWN防重必须保留，付款由本人完成。
+明确告知我：真实查询和官方计价已验证，但首次真实创建麦当劳订单、支付、取餐/收到尚未端到端验收，合成测试不能算交易成功。
+现在只问准备条件并给出第一个小步骤。
+```
+
 把麦当劳中国官方 MCP 接到 ChatGPT，并在服务端强制执行**本人逐笔批准**的参考实现。
 
 > **当前状态（2026-10-18）：ChatGPT 实际查询门店、菜单和套餐详情已通过；官方实际计价已验证。尚未完成第一笔真实麦当劳订单的创建、支付、取餐或收到餐品。**
 >
 > 创建链路、安全边界与异常恢复已有实现和离线合成测试；这不等于真实交易闭环已经验收。首次真实交易完成后，再更新此状态。
 
-这份代码从 KuiNest 的实际接入中抽取，复用已经使用过的瑞幸 MCP v4 模式。公开版移除了私人宿主、生产环境、账号和聊天资料，仅保留麦当劳所需模块，以及从共享 OAuth 实现抽出的单资源版本。它面向愿意自行部署、已有可靠登录系统的开发者；**仓库不是公共代下单服务，也不附带任何人的 Token**。
+这份代码从 KuiNest 的实际接入中抽取，复用已经使用过的瑞幸 MCP v4 模式。公开版移除了私人宿主、生产环境、账号和聊天资料，保留麦当劳所需模块和单资源 OAuth。现在可选择内置单主人 standalone，或继续通过 `registerMcdGateway` 集成自己的登录系统。**仓库不是公共代下单服务，也不附带任何人的 Token**。
 
 目标体验：
 
@@ -34,6 +49,8 @@ ChatGPT 选店、选餐与套餐配置
 
 本次开源整理只运行离线测试，没有使用真实账号建单、付款或取消订单。公开包相对原宿主调整了入口装配、OAuth 路径和客户端 ID；原宿主的验证记录不等于这个抽取包已经完成独立生产部署。详细边界见 [公开复盘](docs/POSTMORTEM-2026-10-18.md)。
 
+独立运行增强已在本机 Ubuntu24.04/Node24.20.0 完成构建与15项定向合成测试，包含真实密码校验、会话重启恢复、Linux权限及原有订单保护；[本轮验证与未验收范围](docs/standalone-validation.md)。
+
 ## 工具与范围
 
 | 工具 | 用途 |
@@ -56,11 +73,18 @@ ChatGPT 选店、选餐与套餐配置
 ```sh
 npm ci
 npm test
+umask 077
+npm run owner:init
+npm run token:init
 ```
 
 测试只使用合成上游和合成账号，不读取你的 Token，不访问官方服务。`better-sqlite3` 是原生依赖，没有适用预编译包时需要本机编译工具。
 
-本包提供 Fastify 挂载函数，复用你的现有登录：
+首次初始化在本人交互终端隐藏输入，默认生成私有 `data/owner.json` 和 `credentials/mcd-token`，均不覆盖已有文件。配置自己的 HTTPS、私有绝对路径、`OWNER_FILE`/`MCD_CREDENTIAL_ROOT` 和数据目录后，`npm start` 运行内置单主人模式；真实创建默认关闭。完整 systemd 安装及安全凭据流程见[新手教程](docs/beginners-guide.md)。仅执行上述命令还没有配置公网 HTTPS 或 ChatGPT 连接。
+
+主人口令仅存 scrypt 哈希，会话令牌仅存摘要；Secure/HttpOnly Cookie、Origin/CSRF、登录限流与8小时过期均保留。会话、OAuth和订单分别持久化。当前没有公共注册、远程密码找回或自动 UNKNOWN 解锁。
+
+高级用户仍可通过原 Fastify 挂载函数复用现有登录，接口保持不变：
 
 ```ts
 import {registerMcdGateway} from './dist/index.js';
@@ -78,7 +102,7 @@ registerMcdGateway(app, {
 
 `inspectSession(cookie)` 必须验证真实服务端会话，返回 `{ownerId, csrfToken}` 或 `undefined`。不能把 Cookie 中自报的用户、请求头或测试假会话直接当作身份。
 
-授权页和订单页使用同源的 `/api/v1/auth/session` 与 `/api/v1/auth/login`。你必须提供这两个端点，或调整两张页面适配既有登录。这里没有默认账号，也没有新造的登录系统。具体契约、Linux 凭据、启动、nginx 和回滚见 [部署说明](docs/DEPLOYMENT.md)。
+授权页和订单页使用同源的 `/api/v1/auth/session` 与 `/api/v1/auth/login`。standalone已经提供真实端点；高级宿主集成时由宿主提供。原外部适配器启动入口改为 `npm run start:host`，原 `registerMcdGateway` API 不变。没有默认密码或测试后门。具体契约、Linux 凭据、启动、nginx 和回滚见 [部署说明](docs/DEPLOYMENT.md)。
 
 ## ChatGPT 连接参数
 

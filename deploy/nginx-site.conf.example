@@ -1,0 +1,9 @@
+# 独立HTTPS站点；先按新手教程申请证书，将mcd.example.com替换为自己的域名。
+server {
+    listen 443 ssl;
+    server_name mcd.example.com;
+    ssl_certificate /etc/letsencrypt/live/mcd.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/mcd.example.com/privkey.pem;
+    include /etc/nginx/snippets/xiaokui-mcd.conf;
+    location / { return 404; }
+}

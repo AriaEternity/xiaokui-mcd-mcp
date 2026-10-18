@@ -1,4 +1,4 @@
-# 先创建专属服务用户、配置真实认证适配模块与仓库外凭据。
+# 独立单主人模式。先创建专属用户、初始化owner.json并保存官方凭据。
 [Unit]
 Description=Xiaokui McDonald MCP gateway
 After=network-online.target
@@ -8,18 +8,11 @@ Wants=network-online.target
 Type=simple
 User=xiaokui-mcd
 Group=xiaokui-mcd
-WorkingDirectory=/opt/xiaokui-mcd
-ExecStart=/usr/bin/node /opt/xiaokui-mcd/examples/host.mjs
-Environment=NODE_ENV=production
-Environment=PUBLIC_ORIGIN=https://mcd.example.com
-Environment=DATA_ROOT=/var/lib/xiaokui-mcd
-Environment=PORT=4318
-Environment=MCP_OAUTH_ENABLED=true
-Environment=MCD_MCP_ENABLED=true
-Environment=MCD_OWNER_ID=replace-with-your-owner-id
-Environment=MCD_ORDER_CREATE_ENABLED=false
-Environment=OWNER_AUTH_ADAPTER=/opt/xiaokui-mcd/owner-auth.mjs
+WorkingDirectory=/opt/xiaokui-mcd/current
+ExecStart=/opt/node-v24.20.0-linux-x64/bin/node /opt/xiaokui-mcd/current/dist/main.js
+EnvironmentFile=/etc/xiaokui-mcd/bridge.env
 LoadCredential=mcd-token:/etc/xiaokui-mcd/mcd-token
+LoadCredential=owner.json:/etc/xiaokui-mcd/owner.json
 StateDirectory=xiaokui-mcd
 StateDirectoryMode=0700
 UMask=0077
@@ -27,6 +20,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
+LimitCORE=0
 ReadWritePaths=/var/lib/xiaokui-mcd
 Restart=on-failure
 RestartSec=5

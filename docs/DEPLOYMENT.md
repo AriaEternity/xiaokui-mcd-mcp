@@ -1,8 +1,20 @@
 # 自托管与宿主接入
 
-公开版是抽取的单资源网关，需要你已有的本人登录。它不包含私人 KuiNest、聊天、手机状态或账号数据库。示例中所有域名和路径都是通用占位值。
+公开版提供两种方式：**standalone 单主人独立运行**，以及原 `registerMcdGateway` 宿主集成。均不包含私人 KuiNest。第一次接触服务器请先读[零基础教程](beginners-guide.md)；出错按[FAQ](faq.md)定位。示例域名和路径都是通用占位值。
 
-## 1. 先完成宿主身份适配
+## 0. 新手使用 standalone
+
+在自己的 Ubuntu24.04 x64、Node24.20.0 环境执行 `npm ci`、`npm test`。本项目有 better-sqlite3 原生依赖；锁定的13.0.3在npm包prebuilds中附带平台N-API构件，没有安装生命周期脚本。标准安装无需手动编译或单独下载二进制，仍须在目标平台安装并验证，不能复制Windows的依赖目录。未来换版本时应重新核对上游安装方式，不照搬其他品牌的依赖假设。
+
+在本人交互终端运行 `npm run owner:init`、`npm run token:init`，隐藏输入本站长密码与本人官方Token。默认文件分别为 `data/owner.json`、`credentials/mcd-token`，都是私有且拒绝覆盖。正式部署可用脚本的 `OWNER_FILE` / `MCD_TOKEN_FILE` 指定仓库外目标；不能把秘密写到命令参数、聊天或环境变量正文。
+
+`npm start` 启动 `dist/main.js`：从 `OWNER_FILE`（或systemd凭据目录的owner.json）加载真实主人，从 `MCD_CREDENTIAL_ROOT`（或 `CREDENTIALS_DIRECTORY`）读取独立mcd-token。主人标识从已验证文件取得，无需 `MCD_OWNER_ID` 或 `OWNER_AUTH_ADAPTER`。PUBLIC_ORIGIN、DATA_ROOT、PORT和创建开关见 `.env.example`。配置文件不会自动加载，使用服务管理器 EnvironmentFile，或本人有经验时用 Node `--env-file` 加载非秘密配置。
+
+内置登录提供 `/api/v1/auth/login`、`session`、`logout`；真实scrypt密码校验，8小时服务端会话，Cookie为Secure/HttpOnly/SameSite=Lax，登录限流与Origin、退出CSRF保护。`DATA_ROOT/identity` 持久化会话摘要；OAuth和订单仍分别保存。没有网络注册、默认密码、自动重置或管理员解锁接口。
+
+使用 `deploy/xiaokui-mcd.service.example`（LoadCredential同时加载owner.json和mcd-token），以及nginx模板；完整首次安装和HTTPS证书顺序见新手教程。创建保持 `MCD_ORDER_CREATE_ENABLED=false`，先做本人OAuth、只读和实际计价。
+
+## 1. 高级方式：接入已有宿主身份
 
 推荐直接在现有 Fastify 宿主调用 `registerMcdGateway`，复用已有服务端会话。
 
@@ -24,7 +36,7 @@ type SessionInspector = (cookie: string) => Promise<OwnerSession | undefined>;
 
 Cookie 应为 Secure、HttpOnly，并使用适当的 SameSite、Path 与过期策略。登录接口应执行自己的同源检查、口令保护和限流。不要从 MCP Bearer Token 制造本人网页会话。两个接口可来自你的已有认证服务；如果修改路径，需要同步调整 `src/oauth/page.ts` 与 `src/http/routes/mcd-order-confirm.ts`。
 
-若使用 `examples/host.mjs`，请在仓库外放置管理员编写的本地模块，并通过 `OWNER_AUTH_ADAPTER` 指向它。模块导出：
+若使用 `examples/host.mjs`，运行 `npm run start:host`，请在仓库外放置管理员编写的本地模块，并通过 `OWNER_AUTH_ADAPTER` 指向它。仍需 `MCD_OWNER_ID` 与宿主真实会话匹配，模块导出：
 
 ```ts
 export async function registerOwnerAuth(app) {
@@ -35,7 +47,7 @@ export async function inspectSession(cookie) {
 }
 ```
 
-这里的注释是接口要求，不是可用的登录实现。示例启动器会要求提供模块；它没有内置测试用户。不要复制 test/ 中的假会话实现到正式环境。
+这里的注释是宿主接口要求，不是可用的登录实现。此高级启动器会要求提供模块；新手用第0节的独立模式即可。不要复制 test/ 中的假会话实现到正式环境。`registerMcdGateway` 的导出和参数保持不变。
 
 已有站点若占用 OAuth well-known 端点，应把麦当劳资源加入其共享 provider，并保留原 issuer、数据库和旧授权。公开版单资源 provider 适用于独立域名，不能直接覆盖现有 OAuth 或指向旧私人授权库。
 
@@ -54,7 +66,7 @@ npm test
 
 Linux 生产优先用 systemd `LoadCredential`，将独立源凭据装入服务专属的只读挂载。读取器会核验挂载信息并接受 systemd 的 0440 运行副本；不是凭路径长得像 `/run/credentials/` 就放行。也支持服务用户私有目录中的 0400/0600 文件。Windows 本地调试还需自行限制 NTFS ACL。
 
-先安装并配置 `deploy/xiaokui-mcd.service.example` 与 `deploy/nginx.conf.example`，再检查配置、启动。它们是需要适配的模板，不是自动部署脚本。Node 路径、认证模块、域名、证书、服务用户和数据路径都由部署者填写。
+standalone安装 `deploy/xiaokui-mcd.service.example`、`deploy/nginx.conf.example` 和 `deploy/nginx-site.conf.example`，再检查配置、启动。它们是需要适配的模板，不是自动部署脚本。Node路径、域名、证书、服务用户和数据路径由部署者准备。高级宿主方式则保留自己的认证及服务装配，不直接覆盖现有模板。
 
 ## 3. OAuth 与上线检查
 
@@ -76,6 +88,6 @@ Linux 生产优先用 systemd `LoadCredential`，将独立源凭据装入服务�
 
 独立程序目录与持久化数据目录分离。更新前停止此网关，备份配置及一致的数据目录，再切换代码；不需要操作其他聊天服务。
 
-若异常，先关闭创建开关并停止此网关，切回上一程序版本。保留当前 OAuth、订单 JSON、SUBMITTING/UNKNOWN 和锁记录；不要将旧数据快照覆盖回来。UNKNOWN 必须由本人核实官方账户，程序回滚不能撤销已经发生的外部交易。
+若异常，先关闭创建开关并停止此网关，切回上一程序版本。保留当前主人文件、会话摘要库、OAuth、订单 JSON、SUBMITTING/UNKNOWN 和锁记录；不要将旧数据快照覆盖回来。UNKNOWN 必须由本人核实官方账户，程序回滚不能撤销已经发生的外部交易。不要把新standalone的主人初始化到已有高级宿主的状态目录，混用两套身份需要单独迁移设计。
 
 公开仓库不包含私人生产部署包；模板没有在读者环境中执行过。原宿主部署和本公开版离线测试的范围见公开复盘。
