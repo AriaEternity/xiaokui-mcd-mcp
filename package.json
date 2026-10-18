@@ -1,0 +1,28 @@
+{
+  "name": "xiaokui-mcd-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "面向 ChatGPT 的麦当劳中国 MCP 接入参考：OAuth、逐笔本人批准与防重复建单",
+  "license": "MIT",
+  "type": "module",
+  "engines": {"node": ">=24.20.0 <25"},
+  "exports": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "start": "node examples/host.mjs"
+  },
+  "dependencies": {
+    "@fastify/rate-limit": "10.3.0",
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "better-sqlite3": "13.0.3",
+    "express": "5.3.0",
+    "fastify": "5.12.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/express": "5.0.6",
+    "@types/node": "24.13.3",
+    "typescript": "6.0.3"
+  }
+}

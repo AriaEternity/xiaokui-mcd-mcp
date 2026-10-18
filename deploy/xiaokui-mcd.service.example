@@ -1,0 +1,35 @@
+# 先创建专属服务用户、配置真实认证适配模块与仓库外凭据。
+[Unit]
+Description=Xiaokui McDonald MCP gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=xiaokui-mcd
+Group=xiaokui-mcd
+WorkingDirectory=/opt/xiaokui-mcd
+ExecStart=/usr/bin/node /opt/xiaokui-mcd/examples/host.mjs
+Environment=NODE_ENV=production
+Environment=PUBLIC_ORIGIN=https://mcd.example.com
+Environment=DATA_ROOT=/var/lib/xiaokui-mcd
+Environment=PORT=4318
+Environment=MCP_OAUTH_ENABLED=true
+Environment=MCD_MCP_ENABLED=true
+Environment=MCD_OWNER_ID=replace-with-your-owner-id
+Environment=MCD_ORDER_CREATE_ENABLED=false
+Environment=OWNER_AUTH_ADAPTER=/opt/xiaokui-mcd/owner-auth.mjs
+LoadCredential=mcd-token:/etc/xiaokui-mcd/mcd-token
+StateDirectory=xiaokui-mcd
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/xiaokui-mcd
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
