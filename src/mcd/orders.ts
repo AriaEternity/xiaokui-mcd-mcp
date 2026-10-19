@@ -1,5 +1,6 @@
 import {createHash,randomBytes,randomUUID,timingSafeEqual} from 'node:crypto';
 import {McdIntentStore} from './intent-store.js';
+import {mcdOrderQuerySummary} from './order-status.js';
 import {parseMcdCall,mcdFailure} from '../mcp/mcd-policy.js';
 import type {McdReader,McdResult} from '../mcp/mcd-policy.js';
 export type McdBinding={ownerId:string;clientId:string;grantId:string;resource:string};
@@ -147,9 +148,7 @@ export class McdOrdersService {
   }));
  }
  private async query(id:string,binding:McdBinding,signal?:AbortSignal){const v=this.owned(id,binding);if(v.state!=='CREATED'||!v.creation)return {...this.summary(v),notice:'没有可核实的已知订单号；UNKNOWN必须本人核实，禁止重试创建。'};
-  const d=mcdData(await this.options.reader.call('query-order',{orderId:v.creation.orderId},signal));if(!object(d)||d.orderId!==v.creation.orderId)throw Error('MCD_ORDER_ID_MISMATCH');const status=text(d.orderStatus,128);
-  // 2026-10-18官方tools/list的query-order.outputSchema明确列出数字字符串状态。
-  const paid=['2','4','6','8','10'].includes(status);const paymentStatus=status==='1'?'pending':paid?'confirmed':'unverified';
-  return {intentId:id,orderId:v.creation.orderId,officialOrderStatus:status,orderStatusName:({'1':'待支付','2':'配餐中（已支付）','4':'配送中','6':'已完成','7':'已取消','8':'已评价','10':'餐厅确认配餐中'} as Record<string,string>)[status]??'未知状态',paymentStatus,...(paymentStatus==='confirmed'?Object.fromEntries(['pickupCode','lockerCode','lockerQrCode'].filter(k=>typeof d[k]==='string'&&d[k]&&(k!=='lockerQrCode'||mcdPaymentUrl(d[k]))).map(k=>[k,d[k]])):{}),notice:paymentStatus==='unverified'?'官方返回未确认支付的状态；不展示取餐信息。':'状态依据本次官方查询。'};
+  const d=mcdData(await this.options.reader.call('query-order',{orderId:v.creation.orderId},signal));if(!object(d)||d.orderId!==v.creation.orderId)throw Error('MCD_ORDER_ID_MISMATCH');
+  return {intentId:id,orderId:v.creation.orderId,...mcdOrderQuerySummary(d,mcdPaymentUrl)};
  }
 }

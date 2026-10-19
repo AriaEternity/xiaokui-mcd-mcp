@@ -42,7 +42,7 @@ async function harness(t,options={}) {
    assert(readdirSync(join(root,'mcd-orders')).filter(p=>p.endsWith('.json')).some(p=>JSON.parse(readFileSync(join(root,'mcd-orders',p),'utf8')).state==='SUBMITTING'));
    if(options.unknown)throw Error('SYNTHETIC-FAILURE '+secret);
    d={orderId:'SYNTHETIC-ORDER-1',payH5Url:'https://m.mcd.cn/mcp/scanToPay?orderId=SYNTHETIC-ORDER-1',orderDetail:{realTotalAmount:'16'}};
-  }else if(name==='query-order')d={orderId:'SYNTHETIC-ORDER-1',orderStatus:status,pickupCode:'SYNTHETIC-PICKUP',mobilePhone:'SYNTHETIC-PRIVATE-PHONE'};
+  }else if(name==='query-order')d={orderId:options.mismatchedOrder?'SYNTHETIC-OTHER-ORDER':'SYNTHETIC-ORDER-1',orderStatus:status,pickupCode:'SYNTHETIC-PICKUP',mobilePhone:'SYNTHETIC-PRIVATE-PHONE'};
   else d=[];
   const envelope={jsonrpc:'2.0',id:b.id,result:success(d)};
   return options.sse?new Response('data: '+JSON.stringify(envelope)+'\n\n',{headers:{'content-type':'text/event-stream'}}):Response.json(envelope);
@@ -109,9 +109,19 @@ for(const sse of [false,true])test('SDK真实传输合成：报价→取餐方�
  assert.deepEqual(h.calls.find(c=>c.name==='create-order').arguments,{storeCode:context.storeCode,orderType:1,beType:1,items:draft.items,needTableware:false,takeWayCode:'SYNTHETIC-TAKEOUT'});
  let q=(await h.call(token,'query-order',{intentId:p.intentId})).structuredContent;assert.equal(q.paymentStatus,'pending');assert.equal(q.pickupCode,undefined);
  h.status('未公开的新状态');q=(await h.call(token,'query-order',{intentId:p.intentId})).structuredContent;assert.equal(q.paymentStatus,'unverified');assert.equal(q.pickupCode,undefined);
- h.status('2');q=(await h.call(token,'query-order',{intentId:p.intentId})).structuredContent;assert.equal(q.paymentStatus,'confirmed');assert.equal(q.pickupCode,'SYNTHETIC-PICKUP');assert(!JSON.stringify(q).includes('SYNTHETIC-PRIVATE-PHONE'));
+ for(const status of ['2','餐厅配餐中','订单已完成']){
+  h.status(status);q=(await h.call(token,'query-order',{intentId:p.intentId})).structuredContent;
+  assert.equal(q.paymentStatus,'unverified');assert.equal(q.paymentVerification.status,'unverified');assert.equal(q.pickupCode,'SYNTHETIC-PICKUP');assert.equal(q.pickupInformationStatus,'available');assert.notEqual(q.orderStatusName,'未知状态');assert(!JSON.stringify(q).includes('SYNTHETIC-PRIVATE-PHONE'));
+ }
  const again=await h.prepare(token);await h.confirm(again.intentId);const denied=await h.call(token,'create-order',{intentId:again.intentId});assert(denied.content[0].text.includes('MCD_DUPLICATE_RECENT_ORDER'));
  assert.equal(h.calls.filter(c=>c.name==='create-order').length,1);assert(!h.logs().includes(secret)&&!h.logs().includes(token));
+});
+test('官方查询的订单号不匹配时整次拒绝，不返回其他订单的状态或取餐信息',async t=>{
+ const h=await harness(t,{mismatchedOrder:true}),token=(await h.grant()).access_token,p=await h.prepare(token);
+ await h.confirm(p.intentId);assert.equal((await h.call(token,'create-order',{intentId:p.intentId})).isError,false);
+ const q=await h.call(token,'query-order',{intentId:p.intentId});
+ assert.equal(q.isError,true);assert(q.content[0].text.includes('MCD_ORDER_ID_MISMATCH'));assert.equal(q.structuredContent,undefined);
+ assert(!JSON.stringify(q).includes('SYNTHETIC-PICKUP'));assert.equal(h.calls.filter(c=>c.name==='create-order').length,1);
 });
 test('受保护确认页不能以GET/聊天/OAuth/错误本人、Origin、CSRF、nonce绕过；未知工具与改写订单在上游前拒绝',async t=>{
  const h=await harness(t),token=(await h.grant()).access_token,p=await h.prepare(token),url='/api/mcd/orders/confirm/'+p.intentId;

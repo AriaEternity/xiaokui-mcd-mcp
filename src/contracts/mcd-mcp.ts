@@ -22,5 +22,5 @@ export const mcdTools = [
   {name:'calculate-price',title:'预览麦当劳价格与取餐方式',description:'按实际商品、套餐子项、特制及优惠券试算，不创建订单；明确needTableware是否需要餐具。服务端补齐官方默认套餐与特制，返回官方取餐方式和quoteId。随后prepare-order选取takeWayCode并生成逐笔确认链接。',inputSchema:object({...context,items:mcdItemsSchema,needTableware:{type:'boolean'}},['storeCode','orderType','beType','items','needTableware']),annotations:preview},
   {name:'prepare-order',title:'生成本笔麦当劳确认页',description:'只接受calculate-price返回的quoteId及该报价提供的takeWayCode。请展示门店、每个套餐子项/特制、数量、优惠、餐具费用和实际应付，并请本人打开链接批准。',inputSchema:object({quoteId:{type:'string',format:'uuid'},takeWayCode:str},['quoteId','takeWayCode']),annotations:preview},
   {name:'create-order',title:'提交本人批准的麦当劳订单',description:'只接受已在受保护页面逐笔批准的intentId。OAuth或聊天确认不能替代批准。报价变化须重确认。UNKNOWN禁止重试或新建相同订单。付款由本人通过官方payH5Url完成。',inputSchema:intent,annotations:{readOnlyHint:false,destructiveHint:true,idempotentHint:false,openWorldHint:true}},
-  {name:'query-order',title:'查询本连接创建的麦当劳订单',description:'仅凭intentId查询已知官方订单号；按官方状态显示，不按用户口头声明推断付款，不编造取餐码。',inputSchema:intent,annotations:read},
+  {name:'query-order',title:'查询本连接创建的麦当劳订单',description:'仅凭intentId查询已知官方订单号；分别返回官方原始状态、规范化履约状态、独立支付核验与官方取餐信息。paymentStatus=unverified不代表未付款；配餐/完成不证明独立支付成功。取餐信息只取匹配订单的官方有效字段，不编造、不重建订单。',inputSchema:intent,annotations:read},
 ];
