@@ -82,6 +82,8 @@ standalone安装 `deploy/xiaokui-mcd.service.example`、`deploy/nginx.conf.examp
 
 不向代理访问日志输出 OAuth 请求参数、Cookie、Bearer、确认链接、付款链接或订单正文。模板为网关路由关闭访问日志；如果现有全站日志仍会捕获它们，需要同步处理。
 
+确认路径新增同源GET `.../confirm/:intentId/status`，现有`/api/mcd/orders/`前缀代理可直接覆盖，无需新增公开身份接口。standalone只输出脱敏批准结果事件并关闭请求日志；高级宿主须自行配置安全日志器。更新后刷新已打开的旧确认页，以服务器状态回读及实际截止时间为准；错误字段、日志边界和兼容说明见[批准恢复](approval-recovery.md)。OAuth、会话、intent及UNKNOWN数据格式均不迁移、不清空。
+
 创建开关只能由部署者显式开启。开启后仍要在 ChatGPT 中由本人发起首单，在网页批准、亲自支付并取餐，才能完成真实闭环验收。此仓库没有执行首单的自动脚本。
 
 ## 4. 更新与回滚

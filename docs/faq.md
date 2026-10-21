@@ -31,6 +31,9 @@
 | 取餐方式怎么选 | 使用当前报价takeWayList中的code调用prepare-order，不硬编码堂食/外带数字，也不按其他品牌推断 |
 | `MCD_REFRESH_STORE_REQUIRED` | 该授权链/本次进程需要先读取门店。重新只读选店，再计价，不猜门店详情 |
 | `MCD_CREATE_DISABLED` / `MCD_APPROVAL_REQUIRED` | 前者是默认创建关闭，后者需网页逐笔批准。教程只做到查询/计价，不需要为了“成功”开启创建 |
+| 点过批准但ChatGPT仍说未批准 | 点“重新核验本笔状态”，以服务器已保存批准及实际截止时间为准；登录失效先登录，过期重新计价。不能只凭按钮点击或聊天确认创建，详见[批准恢复](approval-recovery.md) |
+| `MCD_QUOTE_EXPIRED` / `MCD_APPROVAL_EXPIRED` | 分别为报价/批准到期；本次未发送官方创建。先核对原intent状态，再重新计价、预览并本人批准，不把not_sent当自动重试许可 |
+| `MCD_INTENT_ALREADY_PREPARED` | 本笔已在后续阶段，先query-order查看；不要再次prepare或直接另建订单 |
 | 报价变化/确认链接过期 | 报价5分钟，批准最多2分钟；重新计价并核对变化。不能沿用旧批准、改数据库或追加confirmed:true |
 | 创建UNKNOWN / SUBMITTING /残留锁 | 停止创建，由本人核实官方账户。保留所有数据与锁，禁止重试、换intent或删记录解锁 |
 | 没付款链接或实际金额异常 | 保留已知订单，让本人在官方App核实；不能再建一笔“替代”。付款由本人完成，不能编造支付/收餐证据 |

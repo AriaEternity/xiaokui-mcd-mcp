@@ -3,11 +3,12 @@ import {McdIntentStore} from './intent-store.js';
 import {mcdOrderQuerySummary} from './order-status.js';
 import {parseMcdCall,mcdFailure} from '../mcp/mcd-policy.js';
 import type {McdReader,McdResult} from '../mcp/mcd-policy.js';
+import type {McdIntentState,McdIntentStatus} from '../contracts/mcd-mcp.js';
 export type McdBinding={ownerId:string;clientId:string;grantId:string;resource:string};
 type Obj=Record<string,any>;
 type Quote={shop:{storeCode:string;beCode?:string;name:string;address:string};products:{code:string;name:string;quantity:number;configuration:string[]}[];originalMinor:number;discountMinor:number;payableMinor:number;deliveryMinor:number;tablewareMinor:number;packingMinor:number;takeWays:unknown[];digest:string};
 type Creation={orderId:string;payH5Url?:string;actualPayableMinor?:number;priceChanged:boolean};
-export type McdIntent={version:1;id:string;binding:McdBinding;draft:Record<string,unknown>;quote:Quote;fingerprint:string;takeWayCode?:string;state:'QUOTED'|'PREVIEWED'|'APPROVED'|'SUBMITTING'|'UNKNOWN'|'CREATED'|'REQUOTE_REQUIRED';createdAt:number;expires:number;nonce?:string;approvedUntil?:number;creation?:Creation};
+export type McdIntent={version:1;id:string;binding:McdBinding;draft:Record<string,unknown>;quote:Quote;fingerprint:string;takeWayCode?:string;state:McdIntentState;createdAt:number;expires:number;nonce?:string;approvedUntil?:number;creation?:Creation};
 const object=(v:unknown):v is Obj=>!!v&&typeof v==='object'&&!Array.isArray(v);
 const text=(v:unknown,max=512):string=>{if(typeof v!=='string'||!v.trim()||v.length>max||/[\u0000-\u001f]/.test(v))throw Error('MCD_RESPONSE_INVALID');return v;};
 const minor=(v:unknown):number=>{if(!Number.isSafeInteger(v)||Number(v)<0)throw Error('MCD_AMOUNT_INVALID');return Number(v);};
@@ -89,7 +90,24 @@ export class McdOrdersService {
  private active(binding:McdBinding){if(!this.options.active(binding))throw Error('MCD_AUTH_REVOKED');}
  private owned(id:string,binding:McdBinding){this.active(binding);const v=this.store.get(id);if(!same(v.binding,binding))throw Error('MCD_INTENT_NOT_FOUND');return v;}
  private storeKey(b:McdBinding,code:unknown){return b.ownerId+'/'+b.grantId+'/'+String(code);}
- private summary(v:McdIntent):Obj {return {intentId:v.id,quoteId:v.id,state:v.state==='SUBMITTING'?'UNKNOWN':v.state,expiresAt:new Date(v.expires).toISOString(),currency:'CNY',unit:'yuan',shop:v.quote.shop,products:v.quote.products,totalPrice:v.quote.originalMinor/100,discount:v.quote.discountMinor/100,payable:v.quote.payableMinor/100,deliveryFee:v.quote.deliveryMinor/100,tablewareFee:v.quote.tablewareMinor/100,packingFee:v.quote.packingMinor/100,needTableware:v.draft.needTableware??false,takeWayCode:v.takeWayCode,takeWay:takeWay(v.quote,v.takeWayCode),orderType:1,beType:1,creationEnabled:this.options.createEnabled===true,...(v.state==='PREVIEWED'||v.state==='APPROVED'?{confirmationUrl:this.origin+'/api/mcd/orders/confirm/'+v.id}:{}),notice:'请核对即时到店门店、每个套餐配置、数量、优惠、餐具费用与实际应付；本人打开受保护页面逐笔批准才可提交。'};}
+ private status(v:McdIntent):McdIntentStatus {
+  const now=this.now(),quoteExpired=v.expires<=now;
+  const unknown=v.state==='SUBMITTING'||v.state==='UNKNOWN',created=v.state==='CREATED'&&!!v.creation;
+  const approvalStatus:McdIntentStatus['approvalStatus']=unknown||created||v.state==='REQUOTE_REQUIRED'?'consumed':v.state==='APPROVED'?(quoteExpired||!v.approvedUntil||v.approvedUntil<=now?'expired':'approved'):v.state==='PREVIEWED'?(quoteExpired?'expired':'required'):'not_requested';
+  return {state:v.state==='SUBMITTING'?'UNKNOWN':v.state,serverTime:new Date(now).toISOString(),quoteExpired,approvalStatus,
+   ...(v.approvedUntil?{approvalExpiresAt:new Date(v.approvedUntil).toISOString()}:{}),
+   creationStatus:unknown?'unknown':created?'created':'not_submitted',officialOrderKnown:!!v.creation?.orderId,
+   nextAction:unknown?'owner_reconciliation':created?'query_official_order':quoteExpired||v.state==='REQUOTE_REQUIRED'||approvalStatus==='expired'?'recalculate':approvalStatus==='approved'?'submit':v.state==='PREVIEWED'?'approve':'prepare'};
+ }
+ private statusNotice(s:McdIntentStatus):string {
+  if(s.creationStatus==='unknown')return '创建结果未知或提交尚未完成，必须本人核实官方账户；禁止重试创建、另建intent或删除状态与锁。';
+  if(s.creationStatus==='created')return '已有创建结果，请查询本笔官方订单；不得重新创建。';
+  if(s.nextAction==='recalculate')return '本笔报价、批准已过期或快照需更新；本笔未提交创建，请重新计价、预览并由本人逐笔批准。';
+  if(s.nextAction==='submit')return '本笔已由本人批准，请在实际批准截止时间前提交同一intent；尚未创建或付款，提交时仍会复核报价。';
+  if(s.nextAction==='prepare')return '本笔仅完成计价，尚未批准或创建；请从报价返回的取餐方式选择后prepare-order。';
+  return '本笔尚未批准或创建；请核对门店、每个套餐配置、数量、优惠、费用与实际应付，由本人打开受保护页面逐笔批准。';
+ }
+ private summary(v:McdIntent):Obj {const status=this.status(v);return {intentId:v.id,quoteId:v.id,...status,expiresAt:new Date(v.expires).toISOString(),currency:'CNY',unit:'yuan',shop:v.quote.shop,products:v.quote.products,totalPrice:v.quote.originalMinor/100,discount:v.quote.discountMinor/100,payable:v.quote.payableMinor/100,deliveryFee:v.quote.deliveryMinor/100,tablewareFee:v.quote.tablewareMinor/100,packingFee:v.quote.packingMinor/100,needTableware:v.draft.needTableware??false,takeWayCode:v.takeWayCode,takeWay:takeWay(v.quote,v.takeWayCode),orderType:1,beType:1,creationEnabled:this.options.createEnabled===true,...(status.nextAction==='approve'?{confirmationUrl:this.origin+'/api/mcd/orders/confirm/'+v.id}:{}),notice:this.statusNotice(status)};}
  private created(v:McdIntent):Obj {const c=v.creation!;return {...this.summary(v),orderId:c.orderId,...(c.payH5Url?{payH5Url:c.payH5Url}:{}),paymentLinkUnavailable:!c.payH5Url,actualPayable:c.actualPayableMinor===undefined?undefined:c.actualPayableMinor/100,priceChanged:c.priceChanged,paymentStatus:'unverified',notice:!c.payH5Url?'订单已创建，但官方付款链接未返回或未通过校验；请在麦当劳App核实本笔订单，不得重新创建。':c.priceChanged?'订单已创建，但返回金额与批准报价不同或无法核实；请在官方付款页核对，禁止重新创建。':'订单已创建。请本人打开官方付款链接完成支付，再查询官方订单状态。不得把建单当作已支付。'};}
  private fingerprint(binding:McdBinding,draft:Record<string,unknown>){const items=[...(draft.items as Obj[])].sort((a,b)=>stable(a).localeCompare(stable(b)));return digest({ownerId:binding.ownerId,draft:{...draft,items}});}
  private preventUnknown(binding:McdBinding){if(this.store.list().some(v=>v.binding.ownerId===binding.ownerId&&(v.state==='SUBMITTING'||v.state==='UNKNOWN')))throw Error('MCD_UNKNOWN_ORDER_REQUIRES_OWNER_RECONCILIATION');}
@@ -125,20 +143,23 @@ export class McdOrdersService {
    return result;
   }catch(e){const code=e instanceof Error&&/^(MCD|INTENT)_[A-Z_]+$/.test(e.message)?e.message:'MCD_TEMPORARILY_UNAVAILABLE';return mcdFailure(code);}
  }
- private async prepare(id:string,code:string,binding:McdBinding){return this.store.lock(id,async()=>{this.preventUnknown(binding);const v=this.owned(id,binding);if(v.state!=='QUOTED'||v.expires<=this.now())throw Error('MCD_QUOTE_EXPIRED');
+ private async prepare(id:string,code:string,binding:McdBinding){return this.store.lock(id,async()=>{this.preventUnknown(binding);const v=this.owned(id,binding);if(v.state!=='QUOTED')throw Error('MCD_INTENT_ALREADY_PREPARED');if(v.expires<=this.now())throw Error('MCD_QUOTE_EXPIRED');
   const matches=v.quote.takeWays.filter(w=>object(w)&&w.code===code);if(matches.length!==1||!takeWay(v.quote,code))throw Error('MCD_TAKEWAY_INVALID');
   v.takeWayCode=code;v.state='PREVIEWED';v.nonce=randomBytes(32).toString('base64url');this.store.put(v);return this.summary(v);
  });}
- review(id:string,ownerId:string){const v=this.store.get(id);this.active(v.binding);if(v.binding.ownerId!==ownerId||v.state!=='PREVIEWED'||v.expires<=this.now())throw Error('MCD_CONFIRMATION_UNAVAILABLE');return {...this.summary(v),nonce:v.nonce};}
- async approve(id:string,ownerId:string,nonce:unknown){return this.store.lock(id,async()=>{const v=this.store.get(id);this.active(v.binding);if(v.binding.ownerId!==ownerId||v.state!=='PREVIEWED'||v.expires<=this.now())throw Error('MCD_CONFIRMATION_UNAVAILABLE');if(typeof nonce!=='string'||!v.nonce||Buffer.byteLength(nonce)!==Buffer.byteLength(v.nonce)||!timingSafeEqual(Buffer.from(nonce),Buffer.from(v.nonce)))throw Error('MCD_CONFIRMATION_INVALID');v.state='APPROVED';v.approvedUntil=Math.min(v.expires,this.now()+120000);delete v.nonce;this.store.put(v);return {state:'APPROVED'};});}
+ confirmationStatus(id:string,ownerId:string):McdIntentStatus&{notice:string}{const v=this.store.get(id);this.active(v.binding);if(v.binding.ownerId!==ownerId)throw Error('MCD_CONFIRMATION_UNAVAILABLE');const status=this.status(v);return {...status,notice:this.statusNotice(status)};}
+ private confirmable(v:McdIntent,ownerId:string){this.active(v.binding);if(v.binding.ownerId!==ownerId||v.state!=='PREVIEWED')throw Error('MCD_CONFIRMATION_UNAVAILABLE');if(v.expires<=this.now())throw Error('MCD_QUOTE_EXPIRED');}
+ review(id:string,ownerId:string){const v=this.store.get(id);this.confirmable(v,ownerId);return {...this.summary(v),nonce:v.nonce};}
+ async approve(id:string,ownerId:string,nonce:unknown){return this.store.lock(id,async()=>{const v=this.store.get(id);this.confirmable(v,ownerId);if(typeof nonce!=='string'||!v.nonce||Buffer.byteLength(nonce)!==Buffer.byteLength(v.nonce)||!timingSafeEqual(Buffer.from(nonce),Buffer.from(v.nonce)))throw Error('MCD_CONFIRMATION_INVALID');v.state='APPROVED';v.approvedUntil=Math.min(v.expires,this.now()+120000);delete v.nonce;this.store.put(v);return this.status(v);});}
+ private submissionApproval(v:McdIntent){if(v.expires<=this.now())throw Error('MCD_QUOTE_EXPIRED');if(v.state!=='APPROVED'||!v.approvedUntil)throw Error('MCD_APPROVAL_REQUIRED');if(v.approvedUntil<=this.now())throw Error('MCD_APPROVAL_EXPIRED');}
  private async submit(id:string,binding:McdBinding,signal?:AbortSignal){
   // 主人级锁串行化所有本品牌提交，防止另一个intent绕过未知结果或并发重建同一餐单。
   return this.store.lock('00000000-0000-4000-8000-000000000000',async()=>this.store.lock(id,async()=>{
    const v=this.owned(id,binding);if(v.state==='CREATED'&&v.creation)return this.created(v);this.preventUnknown(binding);
-   if(this.options.createEnabled!==true)throw Error('MCD_CREATE_DISABLED');if(v.state!=='APPROVED'||!v.approvedUntil||v.approvedUntil<=this.now()||v.expires<=this.now())throw Error('MCD_APPROVAL_REQUIRED');
+   if(this.options.createEnabled!==true)throw Error('MCD_CREATE_DISABLED');this.submissionApproval(v);
    const duplicate=this.store.list().find(x=>x.id!==id&&x.binding.ownerId===binding.ownerId&&x.fingerprint===v.fingerprint&&x.state==='CREATED'&&this.now()-x.createdAt<300000);if(duplicate)throw Error('MCD_DUPLICATE_RECENT_ORDER');
    const current=await this.quote(binding,v.draft,signal,v.quote.shop);if(current.digest!==v.quote.digest){v.state='REQUOTE_REQUIRED';delete v.approvedUntil;this.store.put(v);throw Error('MCD_QUOTE_CHANGED_RECONFIRM');}
-   this.active(binding);if(v.approvedUntil<=this.now()||v.expires<=this.now()||signal?.aborted)throw Error('MCD_APPROVAL_REQUIRED');
+   this.active(binding);this.submissionApproval(v);if(signal?.aborted)throw Error('MCD_SUBMISSION_CANCELLED');
    const upstream=parseMcdCall('create-order',{...v.draft,takeWayCode:v.takeWayCode},true).args;
    v.state='SUBMITTING';delete v.approvedUntil;this.store.put(v);
    try{const d=mcdData(await this.options.reader.call('create-order',upstream,signal));if(!object(d))throw Error('MCD_RESPONSE_INVALID');const orderId=text(d.orderId,128);if(!/^[A-Za-z0-9_-]+$/.test(orderId))throw Error('MCD_ORDER_ID_INVALID');
@@ -147,7 +168,7 @@ export class McdOrdersService {
    }catch{v.state='UNKNOWN';this.store.put(v);throw Error('MCD_RESULT_UNKNOWN_DO_NOT_RETRY');}
   }));
  }
- private async query(id:string,binding:McdBinding,signal?:AbortSignal){const v=this.owned(id,binding);if(v.state!=='CREATED'||!v.creation)return {...this.summary(v),notice:'没有可核实的已知订单号；UNKNOWN必须本人核实，禁止重试创建。'};
+ private async query(id:string,binding:McdBinding,signal?:AbortSignal){const v=this.owned(id,binding);if(v.state!=='CREATED'||!v.creation)return this.summary(v);
   const d=mcdData(await this.options.reader.call('query-order',{orderId:v.creation.orderId},signal));if(!object(d)||d.orderId!==v.creation.orderId)throw Error('MCD_ORDER_ID_MISMATCH');
   return {intentId:id,orderId:v.creation.orderId,...mcdOrderQuerySummary(d,mcdPaymentUrl)};
  }

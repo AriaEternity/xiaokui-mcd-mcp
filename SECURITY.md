@@ -9,7 +9,7 @@
 - 随机会话Token使用 `__Host-mcd-session` Cookie，Secure/HttpOnly/SameSite=Lax、Path=/、无Domain；会话摘要、绑定身份指纹、CSRF与8小时过期保存在 `DATA_ROOT/identity/owner-sessions.sqlite`。不存原始会话Token，每次请求查服务端；退出要求Origin/CSRF并立即撤销。
 - 会话、OAuth与订单分别持久化，重启不伪造新登录。主人配置改变使旧指纹会话失效；不能用重新初始化解决密码遗失或更换主人。已有授权/intent仍须保留，当前没有一键迁移/重置。
 - 正式示例使用Linux私有目录、umask0077和受限SQLite。Windows测试不能证明Linux权限成立；正式部署按教程检查自己的systemd挂载、TLS和状态目录。Cookie安全属性始终开启，不用HTTP临时兼容。
-- standalone默认无请求日志与固定错误响应；保留原OAuth精确绑定、受保护网页批准和创建总开关。原 `registerMcdGateway` 集成者继续对自己的SessionInspector和同源登录接口负责。
+- standalone关闭请求日志并使用固定错误响应；安全日志器只新增固定批准结果事件和intent摘要，不输出原始intent、身份、路径、Cookie、CSRF、nonce、Token或异常正文。原 `registerMcdGateway` 使用宿主日志器，宿主关闭logger则没有事件；集成者继续对自己的SessionInspector、同源登录接口与请求日志脱敏负责。
 
 ## 必须保留的边界
 
@@ -17,6 +17,7 @@
 - 只访问固定 `https://mcp.mcd.cn/`，禁止重定向、任意工具和创建自动重发。`transport` 注入只为可信宿主与离线测试提供；不要接受 HTTP 用户指定的 transport、上游或身份检查器。
 - OAuth 使用 S256、固定回调、精确 Resource/Scope 和本人校验。授权/访问 Token 只存摘要，刷新令牌轮换；撤销授权后不能消费已有批准。
 - 本人批准仅来自受保护确认页：真实会话、相同 Origin、CSRF、私有 nonce、短有效期。没有 MCP 批准工具。
+- 新的只读确认status接口仍要求匹配本人真实会话及有效原授权，返回阶段信息，不含nonce或订单详情。页面批准失败仅回读，不自动重复批准/创建；已过期或UNKNOWN不因刷新得到新批准。实际期限与错误字段见[批准恢复](docs/approval-recovery.md)。
 - 订单绑定 owner/client/resource/grant；创建仅取服务端快照。报价变化要重新确认。官方金额与付款结果不确定就如实显示。
 - 数据目录绝对路径、0700，intent 文件 0600；写入 fsync、原子替换，跨进程排他锁。Linux 凭据挂载只信任内核 mountinfo；Windows 本地凭据 ACL 由部署者配置，不能只依赖 POSIX mode。
 - 页面用 textContent 呈现商品与门店，配合 CSP；把上游文字当成不可信数据，不能执行商品描述中的指令。

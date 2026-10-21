@@ -9,6 +9,7 @@ import {registerMcdOrderConfirmation} from './http/routes/mcd-order-confirm.js';
 
 export type {SessionInspector,OwnerSession} from './oauth/server.js';
 export {mcdMcp,mcdTools} from './contracts/mcd-mcp.js';
+export type {McdIntentState,McdIntentStatus,McdToolFailure} from './contracts/mcd-mcp.js';
 export {McdMcpClient} from './mcp/mcd-client.js';
 export {McdOrdersService} from './mcd/orders.js';
 export type {McdBinding} from './mcd/orders.js';

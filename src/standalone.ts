@@ -8,7 +8,8 @@ export function createStandaloneGateway(options:{root:string;publicOrigin:string
  if(resolve(options.root)!==options.root)throw Error('DATA_ROOT_ABSOLUTE_REQUIRED');
  privateDirectory(options.root);
  const identity=localOwnerIdentity({file:options.ownerFile,root:join(options.root,'identity'),publicOrigin:options.publicOrigin,now:options.now});
- const app=Fastify({logger:false,bodyLimit:32768,requestTimeout:30000,connectionTimeout:30000});
+ // 只保留固定批准结果事件；关闭请求日志及路径/请求头/异常正文序列化。
+ const app=Fastify({logger:{level:'info',base:null,serializers:{req:()=>({}),res:()=>({}),err:()=>({type:'Error',message:'内部错误。',stack:''})}},disableRequestLogging:true,bodyLimit:32768,requestTimeout:30000,connectionTimeout:30000});
  app.setErrorHandler((error,_req,reply)=>{
   const code=typeof error==='object'&&error!==null&&'statusCode' in error?error.statusCode:500;
   const status=typeof code==='number'&&[400,413,415,429].includes(code)?code:500;

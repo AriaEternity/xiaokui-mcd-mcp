@@ -75,7 +75,7 @@ async function harness(t,options={}) {
  const call=async(token,name,args)=>{const r=await rpc(token,name,args);assert.equal(r.statusCode,200);const body=r.headers['content-type'].startsWith('text/event-stream')?JSON.parse(r.body.split('data: ')[1].split('\n')[0]):r.json();return body.result;};
  const prepare=async token=>{const nearby=await call(token,'query-nearby-stores',{searchType:2,beType:1,city:'合成市',keyword:'合成地点'});assert.equal(nearby.isError,false,JSON.stringify(nearby));const q=await call(token,'calculate-price',draft);assert.equal(q.isError,false,JSON.stringify(q));const p=await call(token,'prepare-order',{quoteId:q.structuredContent.quoteId,takeWayCode:'SYNTHETIC-TAKEOUT'});assert.equal(p.isError,false);return p.structuredContent;};
  const confirm=async(id,headers=options.realIdentity?realHeaders:ownerHeaders)=>{const d=await inject({url:'/api/mcd/orders/confirm/'+id+'/details',headers});assert.equal(d.statusCode,200);return inject({method:'POST',url:'/api/mcd/orders/confirm/'+id+'/approve',headers,payload:{nonce:d.json().nonce}});};
- return {root,calls,port:()=>app.server.address().port,inject,grant,rpc,call,prepare,confirm,read:id=>JSON.parse(readFileSync(join(root,'mcd-orders',id+'.json'),'utf8')),logs:()=>logs,status:s=>{status=s;},restart:async()=>{await app.close();app=await start();},advance:ms=>{now+=ms;}};
+ return {root,calls,sessionHeaders:()=>({...realHeaders}),port:()=>app.server.address().port,inject,grant,rpc,call,prepare,confirm,read:id=>JSON.parse(readFileSync(join(root,'mcd-orders',id+'.json'),'utf8')),logs:()=>logs,status:s=>{status=s;},restart:async()=>{await app.close();app=await start();},advance:ms=>{now+=ms;}};
 }
 test('OAuth拒绝错误资源/scope/本人，工具仅8个，撤销后访问失效',async t=>{
  const h=await harness(t),token=(await h.grant()).access_token;
@@ -92,9 +92,15 @@ test('OAuth拒绝错误资源/scope/本人，工具仅8个，撤销后访问失�
 });
 test('独立版真实密码登录→OAuth→非交易计价→网页批准，重启保留会话/授权；默认关闭真实创建',async t=>{
  const h=await harness(t,{realIdentity:true}),token=(await h.grant()).access_token,p=await h.prepare(token);
- const anonymous=await h.inject({url:'/api/mcd/orders/confirm/'+p.intentId+'/details'});assert.equal(anonymous.statusCode,403);
+ const url='/api/mcd/orders/confirm/'+p.intentId;
+ const anonymous=await h.inject({url:url+'/details'});assert.equal(anonymous.statusCode,403);
+ assert.equal((await h.inject({url:url+'/status'})).statusCode,403);
+ assert.equal((await h.inject({url:url+'/status',headers:h.sessionHeaders()})).json().approvalStatus,'required');
  assert((await h.call(token,'create-order',{intentId:p.intentId})).isError);
  await h.restart();assert.equal((await h.confirm(p.intentId)).statusCode,200);
+ await h.restart();const approved=(await h.inject({url:url+'/status',headers:h.sessionHeaders()})).json();assert.equal(approved.approvalStatus,'approved');assert.equal(approved.nonce,undefined);assert(approved.approvalExpiresAt);
+ assert.equal((await h.inject({method:'POST',url:'/api/v1/auth/logout',headers:h.sessionHeaders(),payload:{}})).statusCode,200);
+ assert.equal((await h.inject({url:url+'/status',headers:h.sessionHeaders()})).statusCode,403);
  assert((await h.call(token,'create-order',{intentId:p.intentId})).content[0].text.includes('MCD_CREATE_DISABLED'));
  assert.equal(h.calls.filter(c=>c.name==='create-order').length,0);
 });
@@ -137,7 +143,7 @@ test('创建结果UNKNOWN持久化，重启与新intent均禁止重建；批准�
  assert((await h.call(token,'create-order',{intentId:p.intentId})).isError);assert.equal(h.read(p.intentId).state,'UNKNOWN');await h.restart();
  assert((await h.call(token,'create-order',{intentId:p.intentId})).isError);assert((await h.call(token,'calculate-price',draft)).isError);assert.equal(h.calls.filter(c=>c.name==='create-order').length,1);
  const disabled=await harness(t,{createEnabled:false}),dtoken=(await disabled.grant()).access_token,dp=await disabled.prepare(dtoken);await disabled.confirm(dp.intentId);assert((await disabled.call(dtoken,'create-order',{intentId:dp.intentId})).isError);assert.equal(disabled.calls.filter(c=>c.name==='create-order').length,0);
- const expired=await harness(t),etoken=(await expired.grant()).access_token,ep=await expired.prepare(etoken);await expired.confirm(ep.intentId);expired.advance(120001);assert((await expired.call(etoken,'create-order',{intentId:ep.intentId})).content[0].text.includes('MCD_APPROVAL_REQUIRED'));assert.equal(expired.calls.filter(c=>c.name==='create-order').length,0);
+ const expired=await harness(t),etoken=(await expired.grant()).access_token,ep=await expired.prepare(etoken);await expired.confirm(ep.intentId);expired.advance(120001);assert((await expired.call(etoken,'create-order',{intentId:ep.intentId})).content[0].text.includes('MCD_APPROVAL_EXPIRED'));assert.equal(expired.calls.filter(c=>c.name==='create-order').length,0);
 });
 test('报价变更消耗批准，商品不一致/无法核实套餐不会生成确认；同主人不同授权链不能消费批准',async t=>{
  const h=await harness(t,{quote:n=>{const q=quote();if(n>1){q.price=1500;q.discount=100;q.productPrice=1500;q.productList[0].subtotal=1500;}return q;}}),token=(await h.grant()).access_token,other=(await h.grant()).access_token,p=await h.prepare(token);await h.confirm(p.intentId);

@@ -271,7 +271,7 @@ sudo /snap/bin/certbot renew --dry-run
 
 需要检查确认页面时，从当次takeWayList选择官方code，调用prepare-order取得confirmationUrl。本人打开自己的受保护页面，登录后查看门店、完整套餐配置、数量、优惠和应付；**当前只验证页面和报价，不点击批准，也不创建订单**。这里不要求使用者购买餐品。
 
-以后本人明确决定尝试首单时，再单独阅读README首单流程、[订单状态说明](order-status.md)和SECURITY.md；部署者显式开启MCD_ORDER_CREATE_ENABLED=true，重启本实例，仍需每一笔在网页核对批准。create-order仅接收intentId；本人通过当次官方payH5Url支付，再query-order核实。配餐/完成不等于独立支付核验，paymentStatus=unverified也不表示未付款。有效取餐信息来自同一官方订单，缺失就如实说明。OAuth、聊天里的确认、创建成功都不能当作已付款或已取餐。UNKNOWN时停建单、官方核实，禁止重试。
+以后本人明确决定尝试首单时，再单独阅读README首单流程、[订单状态说明](order-status.md)、[批准失败恢复](approval-recovery.md)和SECURITY.md；部署者显式开启MCD_ORDER_CREATE_ENABLED=true，重启本实例，仍需每一笔在网页核对批准。点击后等待页面核实服务器已保存批准及实际截止时间；失败先重新核验，失去登录先登录，过期重新计价，不自动重试创建。create-order仅接收intentId；本人通过当次官方payH5Url支付，再query-order核实。配餐/完成不等于独立支付核验，paymentStatus=unverified也不表示未付款。有效取餐信息来自同一官方订单，缺失就如实说明。OAuth、聊天里的确认、创建成功都不能当作已付款或已取餐。UNKNOWN时停建单、官方核实，禁止重试。
 
 ## 12. 持久化、更新和恢复
 
