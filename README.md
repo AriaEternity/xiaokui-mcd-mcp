@@ -1,5 +1,7 @@
 # 小葵 × 麦当劳中国 MCP
 
+**简体中文** | [English](README.en.md)
+
 > **零基础用户从这里开始：[完整中文新手教程](docs/beginners-guide.md)**。现在提供独立的单主人运行模式，无需 KuiNest、Fastify 宿主或现成登录系统；仍需本人准备服务器、HTTPS 域名、官方 Token 和 ChatGPT 自定义 MCP 权限。[常见问题](docs/faq.md)
 
 ## 复制给 ChatGPT 的部署提示词
